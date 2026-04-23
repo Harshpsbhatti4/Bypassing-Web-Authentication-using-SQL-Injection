@@ -1,56 +1,88 @@
 <?php
 
-# If you are having problems connecting to the MySQL database and all of the variables below are correct
-# try changing the 'db_server' variable from localhost to 127.0.0.1. Fixes a problem due to sockets.
-#   Thanks to @digininja for the fix.
+define( 'DVWA_WEB_PAGE_TO_ROOT', '' );
+require_once DVWA_WEB_PAGE_TO_ROOT . 'dvwa/includes/dvwaPage.inc.php';
 
-# Database management system to use
-$DBMS = getenv('DBMS') ?: 'MySQL';
-#$DBMS = 'PGSQL'; // Currently disabled
+dvwaPageStartup( array( ) );
 
-# Database variables
-#   WARNING: The database specified under db_database WILL BE ENTIRELY DELETED during setup.
-#   Please use a database dedicated to DVWA.
-#
-# If you are using MariaDB then you cannot use root, you must use create a dedicated DVWA user.
-#   See README.md for more information on this.
-$_DVWA = array();
-$_DVWA[ 'db_server' ]   = '127.0.0.1';
-$_DVWA[ 'db_database' ] = 'dvwa';
-$_DVWA[ 'db_user' ]     = 'root';
-$_DVWA[ 'db_password' ] = '';
-$_DVWA[ 'db_port']      = getenv('DB_PORT') ?: '3306';
+dvwaDatabaseConnect();
 
-# ReCAPTCHA settings
-#   Used for the 'Insecure CAPTCHA' module
-#   You'll need to generate your own keys at: https://www.google.com/recaptcha/admin
-$_DVWA[ 'recaptcha_public_key' ]  = getenv('RECAPTCHA_PUBLIC_KEY') ?: '';
-$_DVWA[ 'recaptcha_private_key' ] = getenv('RECAPTCHA_PRIVATE_KEY') ?: '';
+if( isset( $_POST[ 'Login' ] ) ) {
+    // --- VULNERABLE CODE START ---
+    // We are taking input directly without sanitizing it for the project demonstration.
+    
+    $user = $_POST[ 'username' ];
+    $pass = $_POST[ 'password' ];
 
-# Default security level
-#   Default value for the security level with each session.
-#   The default is 'impossible'. You may wish to set this to either 'low', 'medium', 'high' or impossible'.
-$_DVWA[ 'default_security_level' ] = 'low';
+    // Note: mysqli_real_escape_string and md5() have been removed to allow SQL Injection.
+    // --- VULNERABLE CODE END ---
 
-# Default locale
-#   Default locale for the help page shown with each session.
-#   The default is 'en'. You may wish to set this to either 'en' or 'zh'.
-$_DVWA[ 'default_locale' ] = getenv('DEFAULT_LOCALE') ?: 'en';
+    $query = ("SELECT table_schema, table_name, create_time
+                FROM information_schema.tables
+                WHERE table_schema='{$_DVWA['db_database']}' AND table_name='users'
+                LIMIT 1");
+    $result = @mysqli_query($GLOBALS["___mysqli_ston"],  $query );
+    if( mysqli_num_rows( $result ) != 1 ) {
+        dvwaMessagePush( "First time using DVWA.<br />Need to run 'setup.php'." );
+        dvwaRedirect( DVWA_WEB_PAGE_TO_ROOT . 'setup.php' );
+    }
 
-# Disable authentication
-#   Some tools don't like working with authentication and passing cookies around
-#   so this setting lets you turn off authentication.
-$_DVWA[ 'disable_authentication' ] = getenv('DISABLE_AUTHENTICATION') ?: false;
+    // This is the vulnerable query string where our injection happens
+    $query  = "SELECT * FROM `users` WHERE user='$user' AND password='$pass';";
+    
+    $result = @mysqli_query($GLOBALS["___mysqli_ston"],  $query ) or die( '<pre>' . ((is_object($GLOBALS["___mysqli_ston"])) ? mysqli_error($GLOBALS["___mysqli_ston"]) : (($___mysqli_res = mysqli_connect_error()) ? $___mysqli_res : false)) . '.<br />Try <a href="setup.php">installing again</a>.</pre>' );
+    
+    if( $result && mysqli_num_rows( $result ) == 1 ) {    // Login Successful...
+        dvwaMessagePush( "You have logged in as '{$user}'" );
+        dvwaLogin( $user );
+        dvwaRedirect( DVWA_WEB_PAGE_TO_ROOT . 'index.php' );
+    }
 
-define ('MYSQL', 'mysql');
-define ('SQLITE', 'sqlite');
+    // Login failed
+    dvwaMessagePush( 'Login failed' );
+    dvwaRedirect( 'login.php' );
+}
 
-# SQLi DB Backend
-#   Use this to switch the backend database used in the SQLi and Blind SQLi labs.
-#   This does not affect the backend for any other services, just these two labs.
-#   If you do not understand what this means, do not change it.
-$_DVWA['SQLI_DB'] = getenv('SQLI_DB') ?: MYSQL;
-#$_DVWA['SQLI_DB'] = SQLITE;
-#$_DVWA['SQLITE_DB'] = 'sqli.db';
+$messagesHtml = messagesPopAllToHtml();
+Header( 'Cache-Control: no-cache, must-revalidate');
+Header( 'Content-Type: text/html;charset=utf-8' );
+Header( 'Expires: Tue, 23 Jun 2009 12:00:00 GMT' );
 
+// Anti-CSRF
+generateSessionToken();
+
+echo "<!DOCTYPE html>
+<html lang=\"en-GB\">
+    <head>
+        <meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />
+        <title>Login :: Damn Vulnerable Web Application (DVWA)</title>
+        <link rel=\"stylesheet\" type=\"text/css\" href=\"" . DVWA_WEB_PAGE_TO_ROOT . "dvwa/css/login.css\" />
+    </head>
+    <body>
+    <div id=\"wrapper\">
+    <div id=\"header\">
+    <br />
+    <p><img src=\"" . DVWA_WEB_PAGE_TO_ROOT . "dvwa/images/login_logo.png\" /></p>
+    <br />
+    </div>
+    <div id=\"content\">
+    <form action=\"login.php\" method=\"post\">
+    <fieldset>
+            <label for=\"user\">Username</label> <input type=\"text\" class=\"loginInput\" size=\"20\" name=\"username\"><br />
+            <label for=\"pass\">Password</label> <input type=\"password\" class=\"loginInput\" AUTOCOMPLETE=\"off\" size=\"20\" name=\"password\"><br />
+            <br />
+            <p class=\"submit\"><input type=\"submit\" value=\"Login\" name=\"Login\"></p>
+    </fieldset>
+    " . tokenField() . "
+    </form>
+    <br />
+    {$messagesHtml}
+    <br />
+    </div >
+    <div id=\"footer\">
+    <p>" . dvwaExternalLinkUrlGet( 'https://github.com/digininja/DVWA/', 'Damn Vulnerable Web Application (DVWA)' ) . "</p>
+    </div>
+    </div>
+    </body>
+</html>";
 ?>
