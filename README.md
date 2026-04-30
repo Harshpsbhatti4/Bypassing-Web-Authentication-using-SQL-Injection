@@ -1,60 +1,57 @@
-# Bypassing-Web-Authentication-using-SQL-Injection
+# Bypassing Web Authentication & Automated Data Exfiltration via SQL Injection
 
 ## Executive Summary
-This project is a detailed proof-of-concept (PoC) demonstrating how **SQL Injection (SQLi)** can be exploited to bypass web authentication and exfiltrate database records. Utilizing a local lab environment (**XAMPP** & **DVWA**), I navigated through standard security defenses, modified backend source code to simulate a vulnerable environment, and successfully gained administrative access using a Tautology-based attack.
+This project is a practical demonstration of **SQL Injection (SQLi)** vulnerabilities and their impact on web application security. I successfully progressed from manual authentication bypass techniques to professional-grade automated exploitation. Using a local lab environment (**XAMPP & DVWA**), I bypassed security controls, identified database metadata, and performed a full credential dump using **sqlmap**.
 
-## Laboratory Environment
-* **Operating System:** Windows 10
-* **Server Stack:** XAMPP (Apache & MariaDB)
-* **Application:** Damn Vulnerable Web Application (DVWA)
-* **Tools Used:** VS Code (Source Code Analysis), Google Chrome (Testing/Exploitation)
 
-## Phase 1: Environment Configuration
-To begin the testing, I configured the application to its lowest security posture:
-1.  **Database Connection:** Updated `config.inc.php` to connect to the local MariaDB instance (`root` user, no password).
-2.  **Security Level:** Manually edited the configuration file to force the default security level to `low`.
-    ```php
-    $_DVWA[ 'default_security_level' ] = 'low';
-    ```
-3.  **Database Initialization:** Executed the DVWA setup script to populate the `users` table.
+## Laboratory Setup
+* **Host Environment:** Windows 10/11
+* **Web Server Stack:** XAMPP (Apache 2.4.58 & MariaDB 10.4.32)
+* **Target Application:** Damn Vulnerable Web Application (DVWA)
+* **Security Level:** Manually forced to **Low**
+* **Automation Tool:** sqlmap v1.10.4
 
-## Phase 2: Vulnerability Research & Discovery
-Initial testing confirmed that the application was communicating directly with the database without sufficient input sanitization.
+## Phase 1: Manual Vulnerability Discovery
 
-### 1. Error-Based Discovery
-By injecting a single quote (`'`) into the User ID field, the application returned a MariaDB syntax error. This indicated that the input was being interpreted as part of the SQL command rather than literal data.
+### 1. Error-Based Confirmation
+By injecting a single quote (`'`) into the input fields, I successfully triggered a MariaDB syntax error. This confirmed that the application was directly passing raw input into the SQL engine without sanitization.
 
-### 2. Tautology Attack (Data Leakage)
-In the SQL Injection lab, I used the payload `' OR 1=1 #`.
-* **Logic:** `1=1` is a constant truth. 
-* **Result:** The query returned all rows from the `users` table, exposing names and surnames for every account in the database.
+### 2. The Authentication Bypass (Comment Attack)
+I bypassed the `login.php` authentication gate without a valid password by manipulating the backend SQL logic.
+* **Payload:** `admin' #`
+* **Technical Logic:** The backend query was structured as: 
+  `SELECT * FROM users WHERE user = '$username' AND password = '$password';`
+  The injected `'` closes the username string, and the `#` (MySQL/MariaDB comment character) instructs the server to ignore the rest of the query (the password verification logic).
+* **Result:** The application verified that the user `admin` exists and granted full administrative access.
 
-## Phase 3: Authentication Bypass (The Core Exploit)
+## Phase 2: Automated Analysis & Exploitation (sqlmap)
 
-### The Challenge
-Initially, the `login.php` page remained secure due to the use of `mysqli_real_escape_string()` and `md5()` hashing, which neutralized injection characters.
+After manual verification, I utilized **sqlmap** to perform a professional-grade vulnerability assessment and automate the data exfiltration process.
 
-### The Source Code Modification
-To demonstrate a vulnerable authentication flow, I modified `login.php` to remove these security layers:
-* **Removed:** `mysqli_real_escape_string()` (allowed quotes to pass).
-* **Removed:** `md5()` (allowed the SQL comment character `#` to remain intact).
+### 1. Vulnerability Identification
+The automated scan identified that the `id` parameter is susceptible to four distinct SQLi techniques:
+* **Boolean-based blind:** Inferring data based on True/False page responses.
+* **Error-based:** Extracting data through detailed DBMS error messages.
+* **Time-based blind:** Using "sleep" commands to pause server responses.
+* **UNION query:** Merging results from the `users` table directly into the web page output.
 
-### The Final Payload
-**Username:** `admin' #`  
-**Password:** (Left Blank)
+### 2. System Enumeration (Banner Grabbing)
+The tool successfully performed "Banner Grabbing" to identify the backend environment:
+* **Web Server:** Apache 2.4.58, PHP 8.0.30
+* **Backend DBMS:** MariaDB 10.4.32
 
-**Backend Query Transformation:**
-* **Intended:** `SELECT * FROM users WHERE user='admin' AND password='...'`
-* **Injected:** `SELECT * FROM users WHERE user='admin' #' AND password='...'`
+### 3. Full Database Exfiltration
+I executed a targeted dump command to retrieve the `dvwa.users` table.
+* **Command:** `python sqlmap.py -u "[URL]" --cookie="[SESSIONID]" -D dvwa -T users --dump`
+* **Result:** Successfully retrieved all usernames and MD5 password hashes.
+* **Hash Cracking:** Utilized a dictionary-based attack to recover plain-text passwords:
+    * `admin` : `password`
+    * `gordonb` : `abc123`
+    * `pablo` : `letmein`
 
-The `#` symbol commented out the password verification logic. The database engine only checked for the existence of the `admin` user, granting immediate access to the dashboard.
-
-## Remediation & Best Practices
-To secure an application against these attacks, developers must move away from simple input sanitization and implement **Prepared Statements**.
-
-### Secure Coding Example (PHP PDO):
+## Source Code Analysis (Vulnerable Implementation)
+The following code snippet demonstrates the lack of sanitization that makes this attack possible:
 ```php
-// The database treats input strictly as data, never as code.
-$stmt = $pdo->prepare('SELECT * FROM users WHERE user = :username');
-$stmt->execute(['username' => $user_input]);
-$user = $stmt->fetch();
+$user = $_POST[ 'username' ]; // Direct POST data assignment
+$pass = $_POST[ 'password' ]; // No hashing or escaping applied
+$query = "SELECT * FROM `users` WHERE user='$user' AND password='$pass';";
